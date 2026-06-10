@@ -40,6 +40,14 @@ func Efficiency(trees []*FileTree) (float64, EfficiencySlice) {
 	inefficientMatches := make(EfficiencySlice, 0)
 	currentTree := 0
 
+	// Lazily-initialized stacked tree cache. Instead of rebuilding the full
+	// stacked tree from scratch for every whiteout node (O(W*L*N)), we build
+	// it once on the first whiteout and then incrementally Stack new layers
+	// as we advance. The cache is only allocated when whiteout nodes are
+	// actually encountered, so images without deletions pay no extra memory.
+	var cachedTree *FileTree
+	cachedUpTo := -1 // cachedTree reflects trees[0] stacked with trees[0..cachedUpTo]
+
 	visitor := func(node *FileNode) error {
 		path := node.Path()
 		if _, ok := efficiencyMap[path]; !ok {
@@ -62,17 +70,41 @@ func Efficiency(trees []*FileTree) (float64, EfficiencySlice) {
 				sizeBytes += curNode.Data.FileInfo.Size
 				return nil
 			}
-			stackedTree, failedPaths, err := StackTreeRange(trees, 0, currentTree-1)
-			if len(failedPaths) > 0 {
-				for _, path := range failedPaths {
-					log.WithFields("path", path.String()).Debug("unable to include path in stacked tree")
+
+			// Build or incrementally update the stacked tree cache up to
+			// the layer just before the current one, matching the semantics
+			// of the former StackTreeRange(trees, 0, currentTree-1).
+			targetLayer := currentTree - 1
+			if cachedTree == nil {
+				cachedTree = trees[0].Copy()
+				for i := 0; i <= targetLayer; i++ {
+					failedPaths, err := cachedTree.Stack(trees[i])
+					if len(failedPaths) > 0 {
+						for _, p := range failedPaths {
+							log.WithFields("path", p.String()).Debug("unable to include path in stacked tree")
+						}
+					}
+					if err != nil {
+						return fmt.Errorf("unable to stack tree range: %w", err)
+					}
 				}
-			}
-			if err != nil {
-				return fmt.Errorf("unable to stack tree range: %w", err)
+				cachedUpTo = targetLayer
+			} else if cachedUpTo < targetLayer {
+				for i := cachedUpTo + 1; i <= targetLayer; i++ {
+					failedPaths, err := cachedTree.Stack(trees[i])
+					if len(failedPaths) > 0 {
+						for _, p := range failedPaths {
+							log.WithFields("path", p.String()).Debug("unable to include path in stacked tree")
+						}
+					}
+					if err != nil {
+						return fmt.Errorf("unable to stack tree range: %w", err)
+					}
+				}
+				cachedUpTo = targetLayer
 			}
 
-			previousTreeNode, err := stackedTree.GetNode(node.Path())
+			previousTreeNode, err := cachedTree.GetNode(node.Path())
 			if err != nil {
 				return err
 			}
