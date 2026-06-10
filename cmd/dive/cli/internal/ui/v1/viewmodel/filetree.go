@@ -105,6 +105,44 @@ func (vm *FileTreeViewModel) ResetCursor() {
 	vm.bufferIndexLowerBound = 0
 }
 
+// clampCursor ensures TreeIndex, bufferIndex, and bufferIndexLowerBound stay within valid bounds
+// after any operation that changes the visible node set (filter, hide diff types, collapse, layer switch).
+func (vm *FileTreeViewModel) clampCursor() {
+	maxIndex := vm.ModelTree.VisibleSize() - 1
+	if maxIndex < 0 {
+		maxIndex = 0
+	}
+
+	if vm.TreeIndex > maxIndex {
+		vm.TreeIndex = maxIndex
+	}
+	if vm.TreeIndex < 0 {
+		vm.TreeIndex = 0
+	}
+
+	if vm.bufferIndexLowerBound < 0 {
+		vm.bufferIndexLowerBound = 0
+	}
+	if vm.bufferIndexLowerBound > vm.TreeIndex {
+		vm.bufferIndexLowerBound = vm.TreeIndex
+	}
+
+	if vm.TreeIndex > vm.bufferIndexUpperBound() {
+		vm.bufferIndexLowerBound = vm.TreeIndex - vm.height()
+		if vm.bufferIndexLowerBound < 0 {
+			vm.bufferIndexLowerBound = 0
+		}
+	}
+
+	vm.bufferIndex = vm.TreeIndex - vm.bufferIndexLowerBound
+	if vm.bufferIndex < 0 {
+		vm.bufferIndex = 0
+	}
+	if vm.bufferIndex > vm.height() {
+		vm.bufferIndex = vm.height()
+	}
+}
+
 // SetTreeByLayer populates the view model by stacking the indicated image layer file trees.
 func (vm *FileTreeViewModel) SetTreeByLayer(bottomTreeStart, bottomTreeStop, topTreeStart, topTreeStop int) error {
 	if topTreeStop > len(vm.RefTrees)-1 {
@@ -259,6 +297,9 @@ func (vm *FileTreeViewModel) PageDown() error {
 	lines := strings.Split(treeString, "\n")
 
 	newLines := len(lines) - 1
+	if newLines <= 0 {
+		return nil
+	}
 	if vm.height() >= newLines {
 		nextBufferIndexLowerBound = vm.bufferIndexLowerBound + newLines
 	}
@@ -272,12 +313,17 @@ func (vm *FileTreeViewModel) PageDown() error {
 		vm.bufferIndex -= newLines
 	}
 
+	vm.clampCursor()
+
 	return nil
 }
 
 // PageUp moves to previous page putting the cursor on top
 func (vm *FileTreeViewModel) PageUp() error {
 	nextBufferIndexLowerBound := vm.bufferIndexLowerBound - vm.height()
+	if nextBufferIndexLowerBound < 0 {
+		nextBufferIndexLowerBound = 0
+	}
 	nextBufferIndexUpperBound := nextBufferIndexLowerBound + vm.height()
 
 	// todo: this work should be saved or passed to render...
@@ -285,8 +331,14 @@ func (vm *FileTreeViewModel) PageUp() error {
 	lines := strings.Split(treeString, "\n")
 
 	newLines := len(lines) - 2
+	if newLines <= 0 {
+		return nil
+	}
 	if vm.height() >= newLines {
 		nextBufferIndexLowerBound = vm.bufferIndexLowerBound - newLines
+		if nextBufferIndexLowerBound < 0 {
+			nextBufferIndexLowerBound = 0
+		}
 	}
 
 	vm.bufferIndexLowerBound = nextBufferIndexLowerBound
@@ -297,6 +349,9 @@ func (vm *FileTreeViewModel) PageUp() error {
 	} else {
 		vm.bufferIndex += newLines
 	}
+
+	vm.clampCursor()
+
 	return nil
 }
 
@@ -445,6 +500,8 @@ func (vm *FileTreeViewModel) Update(filterRegex *regexp.Regexp, width, height in
 		return fmt.Errorf("unable to propagate vm view tree: %w", err)
 	}
 
+	vm.clampCursor()
+
 	return nil
 }
 
@@ -453,10 +510,19 @@ func (vm *FileTreeViewModel) Render() error {
 	treeString := vm.ViewTree.StringBetween(vm.bufferIndexLowerBound, vm.bufferIndexUpperBound(), vm.ShowAttributes)
 	lines := strings.Split(treeString, "\n")
 
+	// defensive: ensure bufferIndex is within rendered line count
+	renderIndex := vm.bufferIndex
+	if renderIndex >= len(lines) {
+		renderIndex = len(lines) - 1
+	}
+	if renderIndex < 0 {
+		renderIndex = 0
+	}
+
 	// update the contents
 	vm.Buffer.Reset()
 	for idx, line := range lines {
-		if idx == vm.bufferIndex {
+		if idx == renderIndex {
 			_, err := fmt.Fprintln(&vm.Buffer, format.Selected(vtclean.Clean(line, false)))
 			if err != nil {
 				return err

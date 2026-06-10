@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"flag"
+	"fmt"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -397,6 +398,154 @@ func TestFileTreeHideTypeWithFilter(t *testing.T) {
 	}
 
 	runTestCase(t, vm, width, height, regex)
+}
+
+// assertCursorInvariants verifies all cursor/viewport invariants hold.
+func assertCursorInvariants(t *testing.T, vm *FileTreeViewModel, context string) {
+	t.Helper()
+	visibleSize := vm.ModelTree.VisibleSize()
+
+	assert.GreaterOrEqual(t, vm.TreeIndex, 0, "%s: TreeIndex negative", context)
+	if visibleSize > 0 {
+		assert.LessOrEqual(t, vm.TreeIndex, visibleSize-1, "%s: TreeIndex exceeds visible size", context)
+	}
+	assert.GreaterOrEqual(t, vm.bufferIndexLowerBound, 0, "%s: bufferIndexLowerBound negative", context)
+	assert.LessOrEqual(t, vm.bufferIndexLowerBound, vm.TreeIndex, "%s: bufferIndexLowerBound > TreeIndex", context)
+	assert.GreaterOrEqual(t, vm.bufferIndex, 0, "%s: bufferIndex negative", context)
+	assert.LessOrEqual(t, vm.bufferIndex, vm.height(), "%s: bufferIndex > height", context)
+	assert.Equal(t, vm.TreeIndex-vm.bufferIndexLowerBound, vm.bufferIndex, "%s: bufferIndex inconsistent", context)
+
+	node := vm.CurrentNode(nil)
+	if visibleSize > 0 {
+		assert.NotNil(t, node, "%s: CurrentNode returned nil with visible nodes", context)
+	}
+}
+
+func TestCursorClampOnHideDiffType(t *testing.T) {
+	vm := initializeTestViewModel(t)
+
+	width, height := 100, 20
+	vm.Setup(0, height)
+
+	// move cursor deep into the tree
+	err := vm.Update(nil, width, height)
+	require.NoError(t, err)
+	for i := 0; i < 15; i++ {
+		vm.CursorDown()
+	}
+	require.Equal(t, 15, vm.TreeIndex)
+	assertCursorInvariants(t, vm, "before hide")
+
+	// hide unmodified files — this can drastically reduce visible count
+	vm.ToggleShowDiffType(filetree.Unmodified)
+	err = vm.Update(nil, width, height)
+	require.NoError(t, err)
+
+	assertCursorInvariants(t, vm, "after hiding unmodified")
+
+	err = vm.Render()
+	require.NoError(t, err, "render should not fail after hiding diff type")
+}
+
+func TestCursorClampOnLayerSwitch(t *testing.T) {
+	vm := initializeTestViewModel(t)
+
+	width, height := 100, 100
+	vm.Setup(0, height)
+	err := vm.Update(nil, width, height)
+	require.NoError(t, err)
+
+	// move cursor far down
+	for i := 0; i < 30; i++ {
+		vm.CursorDown()
+	}
+	assertCursorInvariants(t, vm, "before layer switch")
+
+	// switch to a different layer which may have a smaller visible tree
+	err = vm.SetTreeByLayer(0, 0, 1, 1)
+	require.NoError(t, err)
+
+	err = vm.Update(nil, width, height)
+	require.NoError(t, err)
+
+	assertCursorInvariants(t, vm, "after layer switch")
+
+	err = vm.Render()
+	require.NoError(t, err, "render should not fail after layer switch")
+}
+
+func TestCursorClampOnFilterApply(t *testing.T) {
+	vm := initializeTestViewModel(t)
+
+	width, height := 100, 100
+	vm.Setup(0, height)
+	err := vm.Update(nil, width, height)
+	require.NoError(t, err)
+
+	// move cursor far down
+	for i := 0; i < 25; i++ {
+		vm.CursorDown()
+	}
+	require.Equal(t, 25, vm.TreeIndex)
+	assertCursorInvariants(t, vm, "before filter")
+
+	// apply a very restrictive filter that matches very few nodes
+	regex, err := regexp.Compile("network")
+	require.NoError(t, err)
+
+	err = vm.Update(regex, width, height)
+	require.NoError(t, err)
+
+	assertCursorInvariants(t, vm, "after restrictive filter")
+
+	err = vm.Render()
+	require.NoError(t, err, "render should not fail after filter")
+}
+
+func TestPageUpAtTop(t *testing.T) {
+	vm := initializeTestViewModel(t)
+
+	width, height := 100, 10
+	vm.Setup(0, height)
+	err := vm.Update(nil, width, height)
+	require.NoError(t, err)
+
+	// page up from the very top — should be a no-op, not produce negative indices
+	err = vm.PageUp()
+	require.NoError(t, err)
+	assertCursorInvariants(t, vm, "page up from top")
+
+	// move down a few lines, then page up repeatedly
+	for i := 0; i < 5; i++ {
+		vm.CursorDown()
+	}
+	err = vm.PageUp()
+	require.NoError(t, err)
+	assertCursorInvariants(t, vm, "page up after small movement")
+
+	err = vm.Render()
+	require.NoError(t, err)
+}
+
+func TestPageDownAtBottom(t *testing.T) {
+	vm := initializeTestViewModel(t)
+
+	width, height := 100, 10
+	vm.Setup(0, height)
+	err := vm.Update(nil, width, height)
+	require.NoError(t, err)
+
+	visibleSize := vm.ModelTree.VisibleSize()
+
+	// page down repeatedly until well past the end
+	for i := 0; i < (visibleSize/height)+5; i++ {
+		err = vm.PageDown()
+		require.NoError(t, err, "page down iteration %d", i)
+		assertCursorInvariants(t, vm, fmt.Sprintf("page down iteration %d", i))
+	}
+
+	err = vm.Render()
+	require.NoError(t, err)
 }
 
 func repoPath(t testing.TB, path string) string {
