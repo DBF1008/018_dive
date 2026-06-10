@@ -17,3 +17,15 @@ func Test_Export(t *testing.T) {
 
 	snaps.MatchJSON(t, payload)
 }
+
+func Test_SummaryExport(t *testing.T) {
+	result := docker.TestAnalysisFromArchive(t, repoPath(t, ".data/test-docker-image.tar"))
+
+	export := NewSummaryExport(result, 3)
+	payload, err := export.Marshal()
+	if err != nil {
+		t.Errorf("Test_SummaryExport: unable to export summary: %v", err)
+	}
+
+	snaps.MatchJSON(t, payload)
+}

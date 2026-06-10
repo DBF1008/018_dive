@@ -78,7 +78,11 @@ func run(ctx context.Context, opts options.Application, img *image.Image, conten
 	}
 
 	if opts.Export.JsonPath != "" {
-		if err := adapter.NewExporter(afero.NewOsFs()).ExportTo(ctx, analysis, opts.Export.JsonPath); err != nil {
+		exportOpts := adapter.ExportOptions{
+			SummaryMode: opts.Export.SummaryMode,
+			TopWasteful: opts.Export.TopWasteful,
+		}
+		if err := adapter.NewExporter(afero.NewOsFs()).ExportTo(ctx, analysis, opts.Export.JsonPath, exportOpts); err != nil {
 			return fmt.Errorf("cannot export analysis: %w", err)
 		}
 		return nil

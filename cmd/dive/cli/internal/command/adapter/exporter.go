@@ -13,7 +13,13 @@ import (
 )
 
 type Exporter interface {
-	ExportTo(ctx context.Context, img *image.Analysis, path string) error
+	ExportTo(ctx context.Context, img *image.Analysis, path string, opts ExportOptions) error
+}
+
+// ExportOptions controls the export format.
+type ExportOptions struct {
+	SummaryMode bool
+	TopWasteful int
 }
 
 type jsonExporter struct {
@@ -26,7 +32,7 @@ func NewExporter(fs afero.Fs) Exporter {
 	}
 }
 
-func (e *jsonExporter) ExportTo(ctx context.Context, analysis *image.Analysis, path string) error {
+func (e *jsonExporter) ExportTo(ctx context.Context, analysis *image.Analysis, path string, opts ExportOptions) error {
 	log.WithFields("path", path).Infof("exporting analysis")
 
 	mon := bus.StartTask(payload.GenericTask{
@@ -41,7 +47,13 @@ func (e *jsonExporter) ExportTo(ctx context.Context, analysis *image.Analysis, p
 		Context:            fmt.Sprintf("[file: %s]", path),
 	})
 
-	bytes, err := export.NewExport(analysis).Marshal()
+	var bytes []byte
+	var err error
+	if opts.SummaryMode {
+		bytes, err = export.NewSummaryExport(analysis, opts.TopWasteful).Marshal()
+	} else {
+		bytes, err = export.NewExport(analysis).Marshal()
+	}
 	if err != nil {
 		mon.SetError(err)
 		return fmt.Errorf("cannot marshal export payload: %w", err)

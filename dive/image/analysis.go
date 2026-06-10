@@ -2,6 +2,7 @@ package image
 
 import (
 	"context"
+	"fmt"
 	"github.com/wagoodman/dive/dive/filetree"
 )
 
@@ -15,6 +16,7 @@ type Analysis struct {
 	WastedUserPercent float64 // = wasted-bytes/user-size-bytes
 	WastedBytes       uint64
 	Inefficiencies    filetree.EfficiencySlice
+	LayerSummaries    []filetree.LayerChangeSummary
 }
 
 func Analyze(ctx context.Context, img *Image) (*Analysis, error) {
@@ -33,6 +35,11 @@ func Analyze(ctx context.Context, img *Image) (*Analysis, error) {
 		wastedBytes += uint64(file.CumulativeSize)
 	}
 
+	layerSummaries, err := filetree.Summarize(img.Trees)
+	if err != nil {
+		return nil, fmt.Errorf("unable to summarize layers: %w", err)
+	}
+
 	return &Analysis{
 		Image:             img.Request,
 		Layers:            img.Layers,
@@ -43,5 +50,6 @@ func Analyze(ctx context.Context, img *Image) (*Analysis, error) {
 		WastedBytes:       wastedBytes,
 		WastedUserPercent: float64(wastedBytes) / float64(userSizeBytes),
 		Inefficiencies:    inefficiencies,
+		LayerSummaries:    layerSummaries,
 	}, nil
 }
