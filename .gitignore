@@ -1,0 +1,47 @@
+# app configs
+.dive.yaml
+
+# misc
+/.image
+*.log
+CHANGELOG.md
+VERSION
+
+# IDEs
+/.idea
+/.vscode
+
+# tooling
+/bin
+/.tool-versions
+/.tmp
+/.tool
+/.mise.toml
+/.task
+/go.work
+/go.work.sum
+
+# builds
+/dist
+/snapshot
+
+# testing
+.cover
+coverage.txt
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, build with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+/tmp
+/build
+/_vendor*
+/vendor
