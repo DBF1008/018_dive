@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"path"
 	"strings"
 
 	"github.com/wagoodman/dive/dive/filetree"
@@ -16,7 +17,13 @@ type layer struct {
 
 // String represents a layer in a columnar format.
 func (l *layer) ToLayer() *image.Layer {
-	id := strings.Split(l.tree.Name, "/")[0]
+	id := path.Base(l.tree.Name)
+	if id == "layer.tar" {
+		id = path.Base(path.Dir(l.tree.Name))
+	}
+	id = strings.TrimSuffix(id, ".tar.gz")
+	id = strings.TrimSuffix(id, ".tgz")
+	id = strings.TrimSuffix(id, ".tar")
 	return &image.Layer{
 		Id:      id,
 		Index:   l.index,

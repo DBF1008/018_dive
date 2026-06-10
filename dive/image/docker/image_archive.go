@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
@@ -19,9 +20,10 @@ import (
 )
 
 type ImageArchive struct {
-	manifest manifest
-	config   config
-	layerMap map[string]*filetree.FileTree
+	manifest   manifest
+	config     config
+	layerMap   map[string]*filetree.FileTree
+	layerOrder []string
 }
 
 func NewImageArchive(tarFile io.ReadCloser) (*ImageArchive, error) {
@@ -61,7 +63,7 @@ func NewImageArchive(tarFile io.ReadCloser) (*ImageArchive, error) {
 				}
 
 				// add the layer to the image
-				img.layerMap[tree.Name] = tree
+				img.addLayer(tree)
 			} else if strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, "tgz") {
 				currentLayer++
 
@@ -81,7 +83,7 @@ func NewImageArchive(tarFile io.ReadCloser) (*ImageArchive, error) {
 				}
 
 				// add the layer to the image
-				img.layerMap[tree.Name] = tree
+				img.addLayer(tree)
 			} else if strings.HasSuffix(name, ".json") || strings.HasPrefix(name, "sha256:") {
 				fileBuffer, err := io.ReadAll(tarReader)
 				if err != nil {
@@ -115,7 +117,7 @@ func NewImageArchive(tarFile io.ReadCloser) (*ImageArchive, error) {
 					if err == nil {
 						currentLayer++
 						// add the layer to the image
-						img.layerMap[tree.Name] = tree
+						img.addLayer(tree)
 						continue
 					}
 				}
@@ -128,7 +130,7 @@ func NewImageArchive(tarFile io.ReadCloser) (*ImageArchive, error) {
 					if err == nil {
 						currentLayer++
 						// add the layer to the image
-						img.layerMap[tree.Name] = tree
+						img.addLayer(tree)
 						continue
 					}
 				}
@@ -139,7 +141,7 @@ func NewImageArchive(tarFile io.ReadCloser) (*ImageArchive, error) {
 				if err == nil {
 					currentLayer++
 					// add the layer to the image
-					img.layerMap[tree.Name] = tree
+					img.addLayer(tree)
 					continue
 				}
 
@@ -164,26 +166,61 @@ func NewImageArchive(tarFile io.ReadCloser) (*ImageArchive, error) {
 	if exists {
 		img.manifest = newManifest(manifestContent)
 	} else {
-		// manifest.json is not part of the OCI spec, docker includes it for compatibility
-		// Provide compatibility by finding the config and using our layerMap
-		var configPath string
-		for path, content := range jsonFiles {
-			if isConfig(content) {
-				configPath = path
-				break
+		// manifest.json is not part of the OCI spec, docker includes it for compatibility.
+		// Use OCI index.json to get correct layer ordering when available.
+		indexContent, hasIndex := jsonFiles["index.json"]
+		if hasIndex {
+			ociIdx, err := parseOCIIndex(indexContent)
+			if err != nil {
+				return img, err
 			}
-		}
-		if len(configPath) == 0 {
-			return img, fmt.Errorf("could not find image manifest")
-		}
+			if len(ociIdx.Manifests) == 0 {
+				return img, fmt.Errorf("OCI index contains no manifests")
+			}
 
-		var layerPaths []string
-		for k := range img.layerMap {
-			layerPaths = append(layerPaths, k)
-		}
-		img.manifest = manifest{
-			ConfigPath:    configPath,
-			LayerTarPaths: layerPaths,
+			manifestPath := digestToPath(ociIdx.Manifests[0].Digest)
+			manifestContent, exists := jsonFiles[manifestPath]
+			if !exists {
+				return img, fmt.Errorf("could not find OCI manifest blob: %s", manifestPath)
+			}
+
+			ociMfst, err := parseOCIManifest(manifestContent)
+			if err != nil {
+				return img, err
+			}
+
+			layerPaths := make([]string, 0, len(ociMfst.Layers))
+			for _, l := range ociMfst.Layers {
+				layerPaths = append(layerPaths, digestToPath(l.Digest))
+			}
+
+			img.manifest = manifest{
+				ConfigPath:    digestToPath(ociMfst.Config.Digest),
+				LayerTarPaths: layerPaths,
+			}
+		} else {
+			// Fallback: find config deterministically, use tar discovery order for layers
+			var configPath string
+			sortedPaths := make([]string, 0, len(jsonFiles))
+			for p := range jsonFiles {
+				sortedPaths = append(sortedPaths, p)
+			}
+			sort.Strings(sortedPaths)
+
+			for _, p := range sortedPaths {
+				if isConfig(jsonFiles[p]) {
+					configPath = p
+					break
+				}
+			}
+			if len(configPath) == 0 {
+				return img, fmt.Errorf("could not find image manifest")
+			}
+
+			img.manifest = manifest{
+				ConfigPath:    configPath,
+				LayerTarPaths: img.layerOrder,
+			}
 		}
 	}
 
@@ -195,6 +232,11 @@ func NewImageArchive(tarFile io.ReadCloser) (*ImageArchive, error) {
 	img.config = newConfig(configContent)
 
 	return img, nil
+}
+
+func (img *ImageArchive) addLayer(tree *filetree.FileTree) {
+	img.layerMap[tree.Name] = tree
+	img.layerOrder = append(img.layerOrder, tree.Name)
 }
 
 func processLayerTar(name string, reader *tar.Reader) (*filetree.FileTree, error) {
