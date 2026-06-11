@@ -1,0 +1,148 @@
+version: 2
+
+release:
+  # If set to auto, will mark the release as not ready for production in case there is an indicator for this in the
+  # tag e.g. v1.0.0-rc1 .If set to true, will mark the release as not ready for production.
+  prerelease: auto
+
+  # If set to true, will not auto-publish the release. This is done to allow us to review the changelog before publishing.
+  draft: false
+
+env:
+  # required to support multi architecture docker builds
+  - DOCKER_CLI_EXPERIMENTAL=enabled
+  - CGO_ENABLED=0
+
+builds:
+  - binary: dive
+    dir: ./cmd/dive
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+      - ppc64le
+    ldflags:
+      -w
+      -s
+      -extldflags '-static'
+      -X main.version={{.Version}}
+      -X main.gitCommit={{.Commit}}
+      -X main.buildDate={{.Date}}
+      -X main.gitDescription={{.Summary}}
+
+brews:
+  - repository:
+      owner: wagoodman
+      name: homebrew-dive
+      token: "{{.Env.TAP_GITHUB_TOKEN}}"
+    homepage: &project_url "https://github.com/wagoodman/dive/"
+    description: &description "A tool for exploring layers in a docker image"
+
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+
+nfpms:
+  - license: MIT
+    maintainer: Alex Goodman
+    homepage: *project_url
+    description: *description
+    formats:
+      - rpm
+      - deb
+
+dockers:
+  # docker.io amd64
+  - &dockerhub_amd64
+    id: docker-amd64
+    ids:
+      - dive
+    use: buildx
+    goarch: amd64
+    image_templates:
+      - docker.io/wagoodman/dive:latest
+      - docker.io/wagoodman/dive:v{{.Version}}-amd64
+    build_flag_templates:
+      - "--build-arg=DOCKER_CLI_VERSION={{.Env.DOCKER_CLI_VERSION}}"
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.description=A tool for exploring layers in a docker image"
+      - "--label=org.opencontainers.image.url={{.GitURL}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.licenses=MIT"
+      - "--label=org.opencontainers.image.authors=Alex Goodman <@wagoodman>"
+
+  # docker.io arm64
+  - &dockerhub_arm64
+    id: docker-arm64
+    ids:
+      - dive
+    use: buildx
+    goarch: arm64
+    image_templates:
+      - docker.io/wagoodman/dive:v{{.Version}}-arm64
+    build_flag_templates:
+      - "--build-arg=DOCKER_CLI_VERSION={{.Env.DOCKER_CLI_VERSION}}"
+      - "--platform=linux/arm64/v8"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.description=A tool for exploring layers in a docker image"
+      - "--label=org.opencontainers.image.url={{.GitURL}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.licenses=MIT"
+      - "--label=org.opencontainers.image.authors=Alex Goodman <@wagoodman>"
+
+  # ghcr.io amd64
+  - id: ghcr-amd64
+    <<: *dockerhub_amd64
+    image_templates:
+      - ghcr.io/wagoodman/dive:v{{.Version}}-amd64
+
+  # ghcr.io arm64
+  - id: ghcr-arm64
+    <<: *dockerhub_arm64
+    image_templates:
+      - ghcr.io/wagoodman/dive:v{{.Version}}-arm64
+
+docker_manifests:
+  # docker.io manifests
+  - name_template: docker.io/wagoodman/dive:latest
+    image_templates: &dockerhub_images
+      - docker.io/wagoodman/dive:v{{.Version}}-amd64
+      - docker.io/wagoodman/dive:v{{.Version}}-arm64
+
+  - name_template: docker.io/wagoodman/dive:v{{.Major}}
+    image_templates: *dockerhub_images
+
+  - name_template: docker.io/wagoodman/dive:v{{.Major}}.{{.Minor}}
+    image_templates: *dockerhub_images
+
+  - name_template: docker.io/wagoodman/dive:v{{.Version}}
+    image_templates: *dockerhub_images
+
+  # ghcr.io manifests
+  - name_template: ghcr.io/wagoodman/dive:latest
+    image_templates: &ghcr_images
+      - ghcr.io/wagoodman/dive:v{{.Version}}-amd64
+      - ghcr.io/wagoodman/dive:v{{.Version}}-arm64
+
+  - name_template: ghcr.io/wagoodman/dive:v{{.Major}}
+    image_templates: *ghcr_images
+
+  - name_template: ghcr.io/wagoodman/dive:v{{.Major}}.{{.Minor}}
+    image_templates: *ghcr_images
+
+  - name_template: ghcr.io/wagoodman/dive:v{{.Version}}
+    image_templates: *ghcr_images
